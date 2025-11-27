@@ -165,3 +165,67 @@ No GitHub (Settings → Secrets and variables → Actions), configure pelo menos
 Com esses secrets configurados, qualquer alteração relevante em `docker-compose.yml`
 ou no próprio workflow fará com que o MinIO seja redeployado automaticamente
 no servidor da Hostinger.
+
+## Configuração de Nginx (proxy para o console do MinIO)
+
+Para expor o console web do MinIO em produção usando o domínio
+`https://minio.vikiassistant.com.br`, configure um host no Nginx similar a:
+
+```nginx
+server {
+    server_name minio.vikiassistant.com.br;
+
+    # WebSocket do MinIO (Object Browser)
+    location /ws/ {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_pass http://127.0.0.1:9001;
+        proxy_read_timeout 600s;
+    }
+
+    # Demais rotas (login, browser, etc.)
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_pass http://127.0.0.1:9001;
+        proxy_read_timeout 600s;
+    }
+
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/minio.vikiassistant.com.br/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/minio.vikiassistant.com.br/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = minio.vikiassistant.com.br) {
+        return 301 https://$host$request_uri;
+    }
+    listen 80;
+    server_name minio.vikiassistant.com.br;
+    return 404;
+}
+```
+
+Após alterar o arquivo de configuração:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Com isso, o console em `https://minio.vikiassistant.com.br/` e o bucket
+(`https://minio.vikiassistant.com.br/browser/viki-assistant`) passam a carregar
+corretamente, incluindo o uso de WebSockets.
