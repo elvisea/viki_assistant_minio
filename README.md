@@ -1,5 +1,14 @@
 # MinIO Setup
 
+## Repositório
+
+Este serviço MinIO é mantido no repositório:
+
+- `https://github.com/elvisea/viki_assistant_minio`
+
+Ele é pensado para ser um serviço de infraestrutura **separado** dos demais projetos
+(como a API `viki_assistant_api`), podendo ser reutilizado por múltiplos serviços.
+
 ## Configuração
 
 1. **Copie o arquivo de exemplo**:
@@ -14,7 +23,10 @@
    MINIO_ROOT_PASSWORD=minioadmin123
    
    # Configuração opcional
+   # Dev / ambiente local
    MINIO_BROWSER_REDIRECT_URL=http://localhost:9001
+   # Produção (console MinIO atrás de proxy no subdomínio)
+   # MINIO_BROWSER_REDIRECT_URL=https://minio.vikiassistant.com.br
    MINIO_PORT=9000
    MINIO_CONSOLE_PORT=9001
    MINIO_BUCKET=minio-bucket
@@ -86,7 +98,7 @@ curl http://localhost:9000/minio/health/live
 |----------|-----------|--------------|
 | `MINIO_ROOT_USER` | Usuário administrador | `minioadmin` |
 | `MINIO_ROOT_PASSWORD` | Senha do administrador | `minioadmin123` |
-| `MINIO_BROWSER_REDIRECT_URL` | URL de redirecionamento | `http://localhost:9001` |
+| `MINIO_BROWSER_REDIRECT_URL` | URL de redirecionamento | `http://localhost:9001` (dev) / `https://minio.vikiassistant.com.br` (prod) |
 | `MINIO_PORT` | Porta da API | `9000` |
 | `MINIO_CONSOLE_PORT` | Porta do console web | `9001` |
 | `MINIO_BUCKET` | Bucket padrão (opcional) | `minio-bucket` |
@@ -102,3 +114,54 @@ curl http://localhost:9000/minio/health/live
 1. **Container `minio-init`**: Executa primeiro e cria a pasta `./data` com permissões corretas
 2. **Container `minio`**: Inicia após o init container e usa a pasta já configurada
 3. **Dependência**: O MinIO só inicia depois que a pasta está pronta 
+
+## CI/CD e Deploy (GitHub Actions → Hostinger)
+
+Este repositório possui um workflow de deploy automático em:
+
+- `.github/workflows/deploy.yml`
+
+### Visão geral
+
+- **Ambiente de destino**: servidor na Hostinger (mesmo utilizado pela API e Evolution API).
+- **Estratégia**:
+  - Faz checkout do repositório.
+  - Cria chave SSH e configura o host `deploy_host`.
+  - Garante que o diretório remoto (`REMOTE_TARGET`) exista.
+  - Garante que a Docker network compartilhada (`DOCKER_NETWORK_NAME`, ex.: `viki_assistant_network`) exista.
+  - Gera um arquivo `.env` no workflow usando **GitHub Secrets**.
+  - Envia `docker-compose.yml` + `.env` via `scp` para o servidor.
+  - Executa `docker compose down` + `docker compose up -d` no servidor remoto.
+
+### GatILHOS DO WORKFLOW
+
+- Executa para:
+  - `push` na branch `main` (deploy automático).
+  - `pull_request` para `main` (apenas validação do workflow, sem SSH).
+- É acionado apenas quando houver alterações em:
+  - `docker-compose.yml`
+  - `.github/workflows/deploy.yml`
+
+### Secrets necessários no repositório
+
+No GitHub (Settings → Secrets and variables → Actions), configure pelo menos:
+
+- **Infraestrutura / SSH / destino** (reutilizando o padrão dos outros projetos):
+  - `SSH_PRIVATE_KEY`
+  - `REMOTE_HOST`
+  - `REMOTE_USER`
+  - `REMOTE_PORT`
+  - `REMOTE_TARGET` (diretório remoto onde o stack MinIO ficará na Hostinger)
+  - (Opcional) `DOCKER_NETWORK_NAME` — se omitido, o workflow usa `viki_assistant_network`.
+
+- **Configuração do MinIO** (usadas para gerar o `.env` remoto):
+  - `MINIO_ROOT_USER`
+  - `MINIO_ROOT_PASSWORD`
+  - `MINIO_PORT` (ex.: `9000`)
+  - `MINIO_CONSOLE_PORT` (ex.: `9001`)
+  - `MINIO_BROWSER_REDIRECT_URL` (ex.: `http://localhost:9001` em dev / `https://minio.vikiassistant.com.br` em produção)
+  - `MINIO_BUCKET` (nome do bucket padrão que você deseja utilizar)
+
+Com esses secrets configurados, qualquer alteração relevante em `docker-compose.yml`
+ou no próprio workflow fará com que o MinIO seja redeployado automaticamente
+no servidor da Hostinger.

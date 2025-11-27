@@ -1,0 +1,152 @@
+name: MinIO Stack CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy.yml'
+
+env:
+  # Docker Network Configuration (reutiliza padrão da Evolution API Stack)
+  DOCKER_NETWORK_NAME: ${{ secrets.DOCKER_NETWORK_NAME || 'viki_assistant_network' }}
+
+  # MinIO Configuration (valores vêm de secrets do repositório)
+  MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
+  MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+  MINIO_PORT: ${{ secrets.MINIO_PORT }}
+  MINIO_CONSOLE_PORT: ${{ secrets.MINIO_CONSOLE_PORT }}
+  MINIO_BROWSER_REDIRECT_URL: ${{ secrets.MINIO_BROWSER_REDIRECT_URL }}
+  MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+
+jobs:
+  deploy:
+    name: Deploy MinIO Stack to Hostinger
+    runs-on: ubuntu-latest
+    environment: production
+    # Executa deploy apenas em push para main (em PR, só valida o workflow gerando .env, sem SSH)
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create SSH key
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config << EOF
+            Host deploy_host
+              HostName ${{ secrets.REMOTE_HOST }}
+              User ${{ secrets.REMOTE_USER }}
+              Port ${{ secrets.REMOTE_PORT }}
+              IdentityFile ~/.ssh/deploy_key
+              StrictHostKeyChecking no
+          EOF
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -p ${{ secrets.REMOTE_PORT }} ${{ secrets.REMOTE_HOST }} >> ~/.ssh/known_hosts
+
+      # Verificar e criar diretório alvo se não existir (mesmo padrão do frontend/API)
+      - name: Check and Create Target Directory
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ssh deploy_host "
+            if [ ! -d \"${{ secrets.REMOTE_TARGET }}\" ]; then
+              echo 'Target directory does not exist. Creating...' && \
+              mkdir -p ${{ secrets.REMOTE_TARGET }} && \
+              echo 'Directory created successfully.';
+            else
+              echo 'Target directory already exists.';
+            fi
+          "
+
+      # Verificar e criar rede Docker se necessário (padrão da Evolution API Stack)
+      - name: Check and Create Docker Network
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ssh deploy_host "
+            if ! docker network ls | grep -q '${{ env.DOCKER_NETWORK_NAME }}'; then
+              echo 'Creating Docker network: ${{ env.DOCKER_NETWORK_NAME }}' && \
+              docker network create ${{ env.DOCKER_NETWORK_NAME }} && \
+              echo 'Network created successfully';
+            else
+              echo 'Docker network ${{ env.DOCKER_NETWORK_NAME }} already exists';
+            fi
+            echo 'Verifying network exists:' && \
+            docker network ls | grep '${{ env.DOCKER_NETWORK_NAME }}' || (echo 'ERROR: Network not found after creation!' && exit 1)
+          "
+
+      # Gerar e transferir arquivo .env + docker-compose.yml
+      - name: Transfer Docker Compose and .env
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Gere o arquivo .env para o servidor com as variáveis do MinIO
+          cat > .env << EOL
+          # MinIO Credentials
+          MINIO_ROOT_USER=${{ env.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD=${{ env.MINIO_ROOT_PASSWORD }}
+
+          # MinIO Ports
+          MINIO_PORT=${{ env.MINIO_PORT }}
+          MINIO_CONSOLE_PORT=${{ env.MINIO_CONSOLE_PORT }}
+
+          # MinIO Optional Config
+          MINIO_BROWSER_REDIRECT_URL=${{ env.MINIO_BROWSER_REDIRECT_URL }}
+          MINIO_BUCKET=${{ env.MINIO_BUCKET }}
+
+          # UID/GID defaults (podem ser ajustados se necessário)
+          UID=1000
+          GID=1000
+          EOL
+
+          echo "Content of .env:"
+          cat .env
+          echo "Content of docker-compose.yml:"
+          cat docker-compose.yml
+
+          # Transfira os arquivos necessários para o servidor usando o alias deploy_host
+          scp docker-compose.yml .env deploy_host:${{ secrets.REMOTE_TARGET }}/
+
+      # Limpeza de containers órfãos antes do deploy
+      - name: Clean up orphaned containers
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ssh deploy_host "
+            cd ${{ secrets.REMOTE_TARGET }} && \
+            docker compose down --remove-orphans || true && \
+            docker container prune -f || true"
+
+      # Deploy efetivo do stack MinIO
+      - name: Deploy to Server via SSH
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ssh deploy_host "
+            cd ${{ secrets.REMOTE_TARGET }} && \
+            echo 'Current directory:' && pwd && \
+            echo 'Listing files:' && ls -la && \
+            echo 'Verifying .env file exists:' && \
+            [ -f .env ] && echo '.env file found' || (echo 'ERROR: .env file not found!' && exit 1) && \
+            echo 'Stopping existing containers (if any):' && \
+            docker compose down || echo 'No containers to stop' && \
+            echo 'Starting MinIO stack with docker compose up -d' && \
+            docker compose up -d && \
+            echo 'Waiting for containers to start...' && \
+            sleep 5 && \
+            docker compose ps && \
+            docker image prune -f && \
+            echo 'MinIO Stack deployed successfully'"
+
+      # Cleanup da chave SSH
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key || true
+
+
+
