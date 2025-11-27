@@ -34,9 +34,49 @@ Ele é pensado para ser um serviço de infraestrutura **separado** dos demais pr
    GID=1000
    ```
 
+## Rede Docker Compartilhada
+
+Este projeto utiliza a rede Docker compartilhada `viki_assistant_network` para comunicação
+com outros serviços do ecossistema Viki Assistant (API, Frontend, Evolution API).
+
+### Configuração da Rede
+
+**IMPORTANTE**: Antes de iniciar os containers, você precisa criar a rede Docker compartilhada:
+
+```bash
+# Criar a rede (execute apenas uma vez)
+./scripts/setup-network.sh
+
+# Ou manualmente:
+docker network create viki_assistant_network
+```
+
+O script `scripts/setup-network.sh` verifica se a rede existe e a cria se necessário.
+Você pode executá-lo de qualquer projeto do ecossistema.
+
+### Projetos Conectados à Rede
+
+- **MinIO Storage** (este projeto)
+- **Viki Assistant API**
+- **Viki Assistant Frontend**
+- **Evolution API**
+
+### Comunicação Entre Serviços
+
+Dentro da rede Docker, os serviços podem acessar o MinIO usando o nome do container:
+
+- **MinIO API**: `http://minio:9000` (dentro da rede)
+- **MinIO Console**: `http://minio:9001` (dentro da rede)
+
+Para acesso externo (do host), continue usando `localhost` com as portas mapeadas.
+
 ## Para executar
 
 ```bash
+# 1. Criar rede Docker compartilhada (se ainda não existir)
+./scripts/setup-network.sh
+
+# 2. Iniciar o MinIO
 docker-compose up -d
 ```
 
@@ -152,7 +192,7 @@ No GitHub (Settings → Secrets and variables → Actions), configure pelo menos
   - `REMOTE_USER`
   - `REMOTE_PORT`
   - `REMOTE_TARGET` (diretório remoto onde o stack MinIO ficará na Hostinger)
-  - (Opcional) `DOCKER_NETWORK_NAME` — se omitido, o workflow usa `viki_assistant_network`.
+  - (Opcional) `DOCKER_NETWORK_NAME` — se omitido, o workflow usa `viki_assistant_network`. **Não é necessário adicionar esta secret se você usar o nome padrão `viki_assistant_network`**.
 
 - **Configuração do MinIO** (usadas para gerar o `.env` remoto):
   - `MINIO_ROOT_USER`
