@@ -16,7 +16,7 @@ services:
         echo "📁 Permissões aplicadas: $(ls -ld /data)"
       '
     networks:
-      - minio_network
+      - viki_assistant_network
 
   minio:
     image: quay.io/minio/minio:latest
@@ -37,7 +37,7 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     command: server --console-address ":9001" /data
     networks:
-      - minio_network
+      - viki_assistant_network
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
@@ -45,5 +45,5 @@ services:
       retries: 3
 
 networks:
-  minio_network:
-    driver: bridge
+  viki_assistant_network:
+    external: true
