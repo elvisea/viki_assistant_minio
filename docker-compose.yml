@@ -31,9 +31,9 @@ services:
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin123}"
-      # MINIO_BROWSER_REDIRECT_URL: Removido - não use quando MinIO está atrás de proxy reverso
-      # Se necessário, defina apenas o domínio sem protocolo (ex: minio.vikiassistant.com.br)
-      # O MinIO não aceita https:// ou http:// nesta variável
+      # Variáveis para uso com proxy reverso (nginx)
+      # MINIO_SERVER_URL: URL pública do servidor MinIO (será configurado via .env se necessário)
+      # MINIO_BROWSER_REDIRECT_URL: URL do console (será configurado via .env se necessário)
     volumes:
       - ./data:/data
     user: "${UID:-1000}:${GID:-1000}"
