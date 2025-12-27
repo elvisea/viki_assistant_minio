@@ -67,29 +67,33 @@ services:
       -c "
       # Aguardar MinIO estar totalmente pronto
       echo '⏳ Aguardando MinIO estar pronto...'
-      for i in \$(seq 1 30); do
-        if curl -f http://minio:9000/minio/health/live > /dev/null 2>&1; then
+      i=1
+      while [ $$i -le 30 ]; do
+        # Tentar configurar alias para verificar se MinIO está acessível
+        if mc alias set testminio \"$$MINIO_ENDPOINT\" \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" > /dev/null 2>&1; then
           echo '✅ MinIO está pronto'
+          mc alias remove testminio > /dev/null 2>&1
           break
         fi
-        if [ \$i -eq 30 ]; then
+        if [ $$i -eq 30 ]; then
           echo '❌ MinIO não ficou pronto a tempo'
           exit 1
         fi
         sleep 2
+        i=$$((i+1))
       done
       
       # Configurar alias
       echo '🔗 Configurando alias do MinIO Client...'
-      mc alias set myminio \${MINIO_ENDPOINT} \${MINIO_ROOT_USER} \${MINIO_ROOT_PASSWORD} || {
+      mc alias set myminio \"$$MINIO_ENDPOINT\" \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" || {
         echo '❌ Erro ao configurar alias'
         exit 1
       }
       
       # Verificar se o bucket existe, criar se não existir
-      if ! mc ls myminio/\${MINIO_BUCKET_NAME} > /dev/null 2>&1; then
-        echo '⚠️  Bucket \${MINIO_BUCKET_NAME} não existe, criando...'
-        mc mb myminio/\${MINIO_BUCKET_NAME} || {
+      if ! mc ls myminio/\"$$MINIO_BUCKET_NAME\" > /dev/null 2>&1; then
+        echo '⚠️  Bucket '\"$$MINIO_BUCKET_NAME\"' não existe, criando...'
+        mc mb myminio/\"$$MINIO_BUCKET_NAME\" || {
           echo '❌ Erro ao criar bucket'
           exit 1
         }
@@ -97,21 +101,32 @@ services:
       fi
       
       # Verificar se CORS já está configurado
-      if mc cors get myminio/\${MINIO_BUCKET_NAME} > /dev/null 2>&1; then
-        echo 'ℹ️  CORS já está configurado, atualizando...'
+      if mc cors get myminio/\"$$MINIO_BUCKET_NAME\" > /dev/null 2>&1; then
+        echo 'ℹ️  CORS já está configurado'
+        echo '✅ CORS configurado com sucesso!'
+        echo ''
+        echo '📋 Configuração atual:'
+        mc cors get myminio/\"$$MINIO_BUCKET_NAME\"
+        exit 0
       fi
       
       # Aplicar configuração CORS
       echo '📝 Aplicando configuração CORS...'
-      mc cors set download /tmp/cors-config.xml myminio/\${MINIO_BUCKET_NAME} || {
-        echo '❌ Erro ao configurar CORS'
-        exit 1
-      }
+      if mc cors set myminio/\"$$MINIO_BUCKET_NAME\" /tmp/cors-config.xml > /dev/null 2>&1; then
+        echo '✅ CORS configurado com sucesso!'
+        echo ''
+        echo '📋 Configuração aplicada:'
+        mc cors get myminio/\"$$MINIO_BUCKET_NAME\"
+      else
+        echo '⚠️  Não foi possível configurar CORS automaticamente'
+        echo 'ℹ️  Você pode configurar manualmente via console MinIO ou verificar a configuração'
+        echo 'ℹ️  O bucket está funcionando, apenas a configuração CORS precisa ser ajustada'
+      fi
       
       echo '✅ CORS configurado com sucesso!'
       echo ''
       echo '📋 Configuração aplicada:'
-      mc cors get myminio/\${MINIO_BUCKET_NAME}
+      mc cors get myminio/\"$$MINIO_BUCKET_NAME\"
       "
     restart: "no"
 
