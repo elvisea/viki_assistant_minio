@@ -46,6 +46,75 @@ services:
       timeout: 20s
       retries: 3
 
+  # Container para configurar CORS automaticamente após MinIO estar pronto
+  minio-cors-setup:
+    image: minio/mc:latest
+    container_name: minio-cors-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin123}"
+      MINIO_BUCKET_NAME: "${MINIO_BUCKET_NAME:-viki-assistant}"
+    volumes:
+      - ./config/cors-config.xml:/tmp/cors-config.xml:ro
+    networks:
+      - viki_assistant_network
+    entrypoint: /bin/sh
+    command: |
+      -c "
+      # Aguardar MinIO estar totalmente pronto
+      echo '⏳ Aguardando MinIO estar pronto...'
+      for i in \$(seq 1 30); do
+        if curl -f http://minio:9000/minio/health/live > /dev/null 2>&1; then
+          echo '✅ MinIO está pronto'
+          break
+        fi
+        if [ \$i -eq 30 ]; then
+          echo '❌ MinIO não ficou pronto a tempo'
+          exit 1
+        fi
+        sleep 2
+      done
+      
+      # Configurar alias
+      echo '🔗 Configurando alias do MinIO Client...'
+      mc alias set myminio \${MINIO_ENDPOINT} \${MINIO_ROOT_USER} \${MINIO_ROOT_PASSWORD} || {
+        echo '❌ Erro ao configurar alias'
+        exit 1
+      }
+      
+      # Verificar se o bucket existe, criar se não existir
+      if ! mc ls myminio/\${MINIO_BUCKET_NAME} > /dev/null 2>&1; then
+        echo '⚠️  Bucket \${MINIO_BUCKET_NAME} não existe, criando...'
+        mc mb myminio/\${MINIO_BUCKET_NAME} || {
+          echo '❌ Erro ao criar bucket'
+          exit 1
+        }
+        echo '✅ Bucket criado'
+      fi
+      
+      # Verificar se CORS já está configurado
+      if mc cors get myminio/\${MINIO_BUCKET_NAME} > /dev/null 2>&1; then
+        echo 'ℹ️  CORS já está configurado, atualizando...'
+      fi
+      
+      # Aplicar configuração CORS
+      echo '📝 Aplicando configuração CORS...'
+      mc cors set download /tmp/cors-config.xml myminio/\${MINIO_BUCKET_NAME} || {
+        echo '❌ Erro ao configurar CORS'
+        exit 1
+      }
+      
+      echo '✅ CORS configurado com sucesso!'
+      echo ''
+      echo '📋 Configuração aplicada:'
+      mc cors get myminio/\${MINIO_BUCKET_NAME}
+      "
+    restart: "no"
+
 networks:
   viki_assistant_network:
     external: true
